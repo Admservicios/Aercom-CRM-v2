@@ -1,45 +1,40 @@
-// ======================================
-// STORAGE
-// ======================================
+/**
+ * ======================================================
+ * Storage Manager
+ * ======================================================
+ */
 
-const Storage = {
+function loadStorage() {
 
-    load() {
+    if (!localStorage.getItem(CONFIG.storageKey)) {
 
-        const data = localStorage.getItem(APP.storageKey);
+        const database = {
+            clientes: [],
+            equipos: [],
+            facturas: [],
+            cotizaciones: [],
+            mantenimientos: [],
+            calendario: []
+        };
 
-        if (!data) return null;
+        localStorage.setItem(
+            CONFIG.storageKey,
+            JSON.stringify(database)
+        );
 
-        return JSON.parse(data);
-
-    },
-
-    save(data) {
-
-        localStorage.setItem(APP.storageKey, JSON.stringify(data));
-
-    },
-
-    remove() {
-
-        localStorage.removeItem(APP.storageKey);
-
-    },
-
-    backup(data) {
-
-        localStorage.setItem(APP.backupKey, JSON.stringify(data));
-
-    },
-
-    restore() {
-
-        const data = localStorage.getItem(APP.backupKey);
-
-        if (!data) return null;
-
-        return JSON.parse(data);
-
+        console.log("✔ Base de datos creada");
     }
 
-};
+    console.log("✔ Storage cargado");
+}
+
+function getDatabase() {
+    return JSON.parse(localStorage.getItem(CONFIG.storageKey));
+}
+
+function saveDatabase(database) {
+    localStorage.setItem(
+        CONFIG.storageKey,
+        JSON.stringify(database)
+    );
+}
