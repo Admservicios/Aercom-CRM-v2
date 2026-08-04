@@ -1,24 +1,23 @@
-// ======================================
-// AERCOM CRM v2
-// Configuración Global
-// ======================================
+/**
+ * ======================================================
+ * AERCOM CRM v2
+ * Configuración Global
+ * ======================================================
+ */
 
-const APP = {
-
-    name: "Aercom CRM",
-
+const CONFIG = {
+    appName: "AERCOM CRM",
     version: "2.0.0",
+    company: "Aercom S.A.",
 
-    company: "Aercom SA",
+    storageKey: "aercomCRM",
 
-    storageKey: "aercom-data",
-
-    backupKey: "aercom-backup",
-
-    autoSave: true,
-
-    debug: true,
-
-    theme: "light"
-
+    debug: true
 };
+
+function loadConfig() {
+    if (CONFIG.debug) {
+        console.log("✔ Configuración cargada");
+        console.table(CONFIG);
+    }
+}
