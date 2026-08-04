@@ -1,40 +1,58 @@
 /**
- * ======================================================
+ * ============================================================
+ * AERCOM CRM v2
  * Storage Manager
- * ======================================================
+ * Versión: 2.1.0
+ * ============================================================
  */
 
-function loadStorage() {
+const STORAGE_KEY = "aercom-data";
 
-    if (!localStorage.getItem(CONFIG.storageKey)) {
+let D = {};
 
-        const database = {
-            clientes: [],
-            equipos: [],
-            facturas: [],
-            cotizaciones: [],
-            mantenimientos: [],
-            calendario: []
-        };
+function loadData() {
 
-        localStorage.setItem(
-            CONFIG.storageKey,
-            JSON.stringify(database)
-        );
+    const saved = localStorage.getItem(STORAGE_KEY);
 
-        console.log("✔ Base de datos creada");
+    if (saved) {
+
+        try {
+
+            D = JSON.parse(saved);
+
+        } catch (error) {
+
+            console.error("Error cargando datos.", error);
+
+            D = {};
+
+        }
+
+    } else {
+
+        D = {};
+
     }
 
     console.log("✔ Storage cargado");
+
 }
 
-function getDatabase() {
-    return JSON.parse(localStorage.getItem(CONFIG.storageKey));
-}
+function saveData() {
 
-function saveDatabase(database) {
     localStorage.setItem(
-        CONFIG.storageKey,
-        JSON.stringify(database)
+        STORAGE_KEY,
+        JSON.stringify(D)
     );
+
+}
+
+function resetData() {
+
+    localStorage.removeItem(STORAGE_KEY);
+
+    D = {};
+
+    console.warn("Storage reiniciado");
+
 }
