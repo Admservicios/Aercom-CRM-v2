@@ -22,37 +22,53 @@ function loadData() {
 
         } catch (error) {
 
-            console.error("Error cargando datos.", error);
+            console.error("Error leyendo LocalStorage.", error);
 
-            D = {};
+            D = JSON.parse(JSON.stringify(DEFAULT));
 
         }
 
     } else {
 
-        D = {};
+        D = JSON.parse(JSON.stringify(DEFAULT));
 
     }
 
-    console.log("✔ Storage cargado");
+    // Objetos obligatorios
+    if (!D.facturacion_estados) D.facturacion_estados = {};
+    if (!D.recordatorios) D.recordatorios = [];
+    if (!D.pedidos) D.pedidos = [];
+    if (!D.eventos) D.eventos = [];
+
+    // Arrays obligatorios
+    if (!Array.isArray(D.clientes)) D.clientes = [];
+    if (!Array.isArray(D.equipos)) D.equipos = [];
+    if (!Array.isArray(D.cotizaciones)) D.cotizaciones = [];
+    if (!Array.isArray(D.recordatorios)) D.recordatorios = [];
+
+    console.log("✔ Datos cargados");
 
 }
 
-function saveData() {
+function persist() {
+
+    D.lastSaved = today();
 
     localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify(D)
     );
 
+    console.log("✔ Datos guardados");
+
 }
 
-function resetData() {
+function resetStorage() {
 
     localStorage.removeItem(STORAGE_KEY);
 
-    D = {};
+    D = JSON.parse(JSON.stringify(DEFAULT));
 
-    console.warn("Storage reiniciado");
+    persist();
 
 }
