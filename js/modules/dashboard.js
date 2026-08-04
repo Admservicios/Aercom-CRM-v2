@@ -4,6 +4,47 @@
  * Dashboard Module
  * ============================================================
  */
+function _dashItemHtml(it){
+  const BS={
+    'EQ.VENC':'background:var(--err-bg);color:var(--err)',
+    'FOLLOW-UP':'background:var(--warn-bg);color:var(--warn)',
+    'RECORDATORIO':'background:var(--info-bg);color:var(--info)',
+    'EQ.PROX':'background:var(--warn-bg);color:var(--warn)',
+    'S/FECHA':'background:var(--card-alt);color:var(--t3);border:1px solid var(--border)',
+    'PS.VENC':'background:var(--info-bg);color:var(--info)',
+    'A.FACT':'background:var(--purple-bg);color:var(--purple)',
+    'BATERÍA':'background:var(--warn-bg);color:var(--warn)',
+    'REFRIG.':'background:var(--info-bg);color:var(--info)'
+  };
+  const dot=it.color==='err'?'var(--err)':it.color==='afact'?'var(--purple)':it.color==='gris'?'var(--t4)':'var(--warn)';
+  const d=it.days;
+  const dHtml=d===null
+    ?`<span class="dash-urgent-days" style="color:var(--purple);background:var(--purple-bg)">${fmtMoney(it.monto||0)}</span>`
+    :d>=9000
+    ?`<span class="dash-urgent-days" style="color:var(--t3);background:var(--bg-soft)">Sin fecha</span>`
+    :d<0
+    ?`<span class="dash-urgent-days red">${d} d.</span>`
+    :d===0
+    ?`<span class="dash-urgent-days orange">hoy</span>`
+    :`<span class="dash-urgent-days" style="color:var(--warn);background:transparent">${d} d.</span>`;
+  const critBdg=it.crit?`<span class="badge b-err" style="font-size:10px;padding:1px 4px;margin-left:4px;vertical-align:middle">CRÍTICO</span>`:'';
+  return `<div class="dash-urgent-item">
+    <div class="dash-urgent-dot" style="background:${dot}"></div>
+    <span class="dash-urgent-badge" style="${BS[it.type]||''}">${it.type}</span>
+    <div class="dash-urgent-body">
+      <div class="dash-urgent-title">${it.main}${critBdg}</div>
+      ${it.client?`<div class="dash-urgent-sub">${it.client}</div>`:''}
+    </div>
+    ${dHtml}
+  </div>`;
+}
+function showDashAlerts(){
+  if(!_dashAlertItems.length) return;
+  document.getElementById('modal-title').textContent='Todas las alertas';
+  document.getElementById('modal-body').innerHTML=`<div class="dash-urgent" style="border:none;border-radius:0">${_dashAlertItems.map(_dashItemHtml).join('')}</div>`;
+  document.getElementById('modal-foot').innerHTML=`<button class="btn btn-outline" onclick="closeModal()">Cerrar</button>`;
+  document.getElementById('modal-overlay').classList.add('open');
+}
 function renderDashboard(){
   const now=new Date();
 
@@ -243,4 +284,827 @@ function renderDashboardCharts(){
         cutout:'62%'}
     });
   } else { leg3.innerHTML=''; w3.innerHTML=mkEmpty(); }
+}
+
+// ─── PIPELINE ────────────────────────────────────────────────────────────────
+const ESTADOS=['Solicitud','Cotizar','Enviar','En seguimiento','Aprobada','A facturar','Facturada','Ejecutada','Rechazada'];
+const E_COLOR={'Solicitud':'#6b7280','Cotizar':'#06b6d4','Enviar':'#3b82f6','En seguimiento':'#f59e0b','Aprobada':'#22c55e','A facturar':'#d9730d','Facturada':'#8b5cf6','Ejecutada':'#10b981','Rechazada':'#ef4444'};
+
+function renderPipeline(){
+  const activas=D.cotizaciones.filter(c=>
+    !['Facturada','Ejecutada','Rechazada'].includes(c.estado)).length;
+  const aFact=D.cotizaciones.filter(c=>c.estado==='A facturar').length;
+  document.getElementById('pipeline-sub').textContent=
+    `${activas} activas · ${aFact} a facturar`;
+
+  const wrap=document.getElementById('pipeline-kanban');
+  wrap.innerHTML='';
+  ESTADOS.forEach(est=>{
+    const cards=D.cotizaciones.filter(c=>c.estado===est);
+    const col=document.createElement('div');
+    col.className='k-col';
+    col.dataset.estadoCol=est;
+    const totalMonto=cards.reduce((s,c)=>s+(c.monto||0),0);
+    col.innerHTML=`
+      <div class="k-col-head" style="color:${E_COLOR[est]}">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span>${est}</span><span class="k-count">${cards.length}</span>
+        </div>
+        ${totalMonto>0?`<div class="k-col-total">${fmtMoney(totalMonto)}</div>`:''}
+      </div>
+      <div class="k-body" data-estado="${est}">
+        ${cards.length===0?'<div class="k-empty">Sin cotizaciones</div>':''}
+        ${cards.map(c=>buildCard(c,est)).join('')}
+      </div>`;
+    wrap.appendChild(col);
+  });
+  setupDrag();
+}
+
+function toTitleCase(str) {
+  if (!str) return '';
+  const SKIP = ['DE','DEL','LA','LAS','LOS','Y','SA','SRL','SAS','S.A.','S.R.L.','ARG'];
+  return str.toLowerCase().split(' ').map((w, i) => {
+    const up = w.toUpperCase();
+    if (i > 0 && SKIP.includes(up)) return w.toLowerCase();
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(' ');
+}
+
+function buildCard(c, estado){
+  const diff = c.fechaFollowup ? daysDiff(c.fechaFollowup) : 9999;
+  const overdue  = diff < 0  && !['A facturar','Facturada','Ejecutada','Rechazada'].includes(c.estado);
+  const dueToday = diff === 0 && !['A facturar','Facturada','Ejecutada','Rechazada'].includes(c.estado);
+  const cls = overdue ? 'ov-due' : dueToday ? 'ov-today' : '';
+
+  const pedExist = c.estado === 'Aprobada'
+    ? (D.pedidos||[]).find(p => p.cotizacionId === c.id)
+    : null;
+
+  const pedBtn = c.estado === 'Aprobada'
+    ? (pedExist
+      ? `<div class="k-ped-wrap">
+           <span class="k-ped-tag k-ped-ok"
+                 onclick="event.stopPropagation();openPedidoModal('${pedExist.id}',null,null)">
+             ✓ ${pedExist.id}
+           </span>
+         </div>`
+      : `<div class="k-ped-wrap">
+           <button class="k-ped-btn" draggable="false"
+                   onclick="event.stopPropagation();openPedidoModal(null,'${c.id}',null)">
+             📋 Generar pedido
+           </button>
+         </div>`)
+    : '';
+
+  const followUpHtml = c.fechaFollowup
+    ? `<div class="k-followup ${overdue?'k-followup-err':dueToday?'k-followup-warn':''}">
+         ${overdue ? '⚠ ' : dueToday ? '⏰ ' : ''}${fmtDate(c.fechaFollowup)}
+       </div>`
+    : '';
+
+  const accentColor = E_COLOR[estado] || E_COLOR[c.estado] || '#9b9b97';
+  const monto = fmtMoney(c.monto);
+  const cliente = toTitleCase(clientName(c.clienteId));
+  const desc = c.descripcion
+    ? (c.descripcion.length > 60 ? c.descripcion.slice(0,60)+'…' : c.descripcion)
+    : '—';
+
+  return `
+  <div class="k-card ${cls}" draggable="true" data-id="${c.id}"
+       ondblclick="openQuoteModal('${c.id}',null)"
+       title="Doble clic para editar">
+
+    <div class="k-card-accent" style="background:${accentColor}"></div>
+
+    <div class="k-card-inner">
+
+      <div class="k-card-top">
+        <span class="k-id">${c.id}</span>
+        <button class="k-del-btn" draggable="false"
+                onclick="event.stopPropagation();delQuoteConfirm('${c.id}')"
+                title="Eliminar">✕</button>
+      </div>
+
+      <div class="k-client">${cliente}</div>
+
+      <div class="k-desc">${desc}</div>
+
+      <div class="k-card-footer">
+        <div class="k-amount">${monto}</div>
+        <div class="k-meta">
+          ${followUpHtml}
+          ${c.responsable
+            ? `<div class="k-resp">${c.responsable.split(' ')[0]}</div>`
+            : ''}
+        </div>
+      </div>
+
+      ${pedBtn}
+
+    </div>
+  </div>`;
+}
+
+function setupDrag(){
+  let dragId=null;
+  const wrap=document.getElementById('pipeline-kanban');
+
+  wrap.addEventListener('dragstart',e=>{
+    const card=e.target.closest('.k-card');
+    if(!card) return;
+    dragId=card.dataset.id;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed='move';
+  });
+
+  document.addEventListener('dragend',()=>{
+    document.querySelectorAll('.k-card.dragging').forEach(c=>c.classList.remove('dragging'));
+  },{once:false});
+
+  wrap.querySelectorAll('.k-body').forEach(body=>{
+    body.addEventListener('dragover',e=>{
+      e.preventDefault();
+      e.dataTransfer.dropEffect='move';
+      wrap.querySelectorAll('.k-body').forEach(b=>b.classList.remove('drag-over'));
+      body.classList.add('drag-over');
+    });
+    body.addEventListener('dragleave',e=>{
+      if(!body.contains(e.relatedTarget)) body.classList.remove('drag-over');
+    });
+    body.addEventListener('drop',e=>{
+      e.preventDefault();
+      body.classList.remove('drag-over');
+      if(!dragId) return;
+      const cot=D.cotizaciones.find(c=>c.id===dragId);
+      const newEst=body.dataset.estado;
+      if(cot){
+        if(newEst==='Facturada') confirmFacturacion(cot.id);
+        else { cot.estado=newEst; persist(); renderPipeline(); }
+      }
+      dragId=null;
+    });
+  });
+}
+
+function confirmFacturacion(cotId){
+  const cot=D.cotizaciones.find(c=>c.id===cotId);
+  if(!cot) return;
+  document.getElementById('modal-title').textContent=`Confirmar facturación — ${cotId}`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--t2);margin:0 0 16px;font-size:13.5px">¿Confirmar que la cotización <strong>${cotId}</strong> fue facturada?</p>
+    <div class="form-row">
+      <div class="fg"><label class="fl">N° de factura <span style="color:var(--t3);font-weight:400">(opcional)</span></label><input class="fc" id="fact-nro" placeholder="Ej: A-0001-00012345" value="${cot.nroFactura||''}"></div>
+      <div class="fg"><label class="fl">Fecha de factura</label><input class="fc" type="date" id="fact-fecha" value="${cot.fechaFactura||today()}"></div>
+    </div>`;
+  document.getElementById('modal-foot').innerHTML=`
+    <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" style="background:#8b5cf6;border-color:#8b5cf6" onclick="doFacturar('${cotId}')">Confirmar facturación</button>`;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('fact-nro')?.focus(),80);
+}
+function doFacturar(cotId){
+  const cot=D.cotizaciones.find(c=>c.id===cotId);
+  if(!cot) return;
+  cot.estado='Facturada';
+  cot.nroFactura=(document.getElementById('fact-nro')||{}).value.trim()||'';
+  cot.fechaFactura=(document.getElementById('fact-fecha')||{}).value||today();
+  persist();
+  closeModal();
+  renderPipeline();
+  toast(`${cotId} marcada como Facturada`);
+}
+
+function equipInlineDate(el, equipId, fieldKey){
+  const eq=D.equipos.find(e=>e.id===equipId);
+  if(!eq) return;
+  const origVal=eq[fieldKey]||'';
+  const origHtml=el.outerHTML;
+  const inMain=!!el.closest('#equip-tbody');
+  const inp=document.createElement('input');
+  inp.type='date';
+  inp.value=origVal;
+  inp.style.cssText='font-size:13px;border:0.5px solid var(--info);border-radius:4px;padding:2px 4px;background:var(--card);color:var(--t1);font-family:inherit;outline:none;max-width:140px';
+  el.replaceWith(inp);
+  inp.focus();
+  let done=false;
+  function commit(){
+    if(done) return; done=true;
+    const v=inp.value||null;
+    eq[fieldKey]=v;
+    const FD={'Semanal':7,'Quincenal':15,'Mensual':30,'Bimestral':60,'Trimestral':90,'Semestral':180,'Anual':365};
+    if(fieldKey==='ultimoPreventivo') eq.proximoPreventivo=v?addDays(v,365):null;
+    else if(fieldKey==='ultimoAceite') eq.proximoAceite=v?addDays(v,730):null;
+    else if(fieldKey==='ultimoBateria') eq.proximoBateria=v?addDays(v,730):null;
+    else if(fieldKey==='ultimaVisita'){
+      const cli=D.clientes.find(c=>c.id===eq.clienteId);
+      const d=FD[cli?.frecuenciaVisita||''];
+      eq.proximaVisita=v&&d?addDays(v,d):null;
+    }
+    persist();
+    toast('✓ Fecha actualizada');
+    if(inMain) renderEquipos(); else fichaTab('equipos');
+    setTimeout(()=>{
+      const cell=document.querySelector(`[data-equip="${equipId}"][data-field="${fieldKey}"]`);
+      if(cell){cell.classList.add('eid-flash');setTimeout(()=>cell.classList.remove('eid-flash'),950);}
+    },30);
+  }
+  function restore(){
+    if(done) return; done=true;
+    inp.insertAdjacentHTML('beforebegin',origHtml);
+    inp.remove();
+  }
+  inp.addEventListener('blur',commit);
+  inp.addEventListener('keydown',ev=>{
+    if(ev.key==='Enter') inp.blur();
+    if(ev.key==='Escape'){inp.removeEventListener('blur',commit);restore();}
+  });
+}
+function eqDateCell(eid, lastField, lastVal, nextVal){
+  const diff=nextVal?daysDiff(nextVal):null;
+  const nc=diff===null?'color:var(--t3)':diff<0?'color:var(--err);font-weight:600':diff<=30?'color:#b45309;font-weight:600':'color:var(--ok)';
+  const lastHtml=lastVal
+    ?`<span class="equip-date-last" onclick="equipInlineDate(this,'${eid}','${lastField}')">${fmtDate(lastVal)}</span>`
+    :`<span class="equip-date-none" onclick="equipInlineDate(this,'${eid}','${lastField}')">+ Sin registro</span>`;
+  return `<td class="equip-date-cell" data-equip="${eid}" data-field="${lastField}">${lastHtml}<div class="equip-date-next" style="${nc}">Próx: ${nextVal?fmtDate(nextVal):'—'}</div></td>`;
+}
+// ─── EQUIPOS ─────────────────────────────────────────────────────────────────
+function renderEquipos(){
+  const venc=D.equipos.filter(e=>equipStatus(e).st==='rojo').length;
+  const prox=D.equipos.filter(e=>equipStatus(e).st==='amarillo').length;
+  document.getElementById('equipos-sub').textContent=
+    `${D.equipos.length} equipos · ${venc} vencidos · ${prox} por vencer`;
+
+  const filtered=D.equipos.filter(e=>equipFilter==='todos'||equipStatus(e).st===equipFilter);
+  const tbody=document.getElementById('equip-tbody');
+  if(!filtered.length){
+    tbody.innerHTML=`<tr><td colspan="8"><div class="empty">No hay equipos para mostrar</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML=filtered.map(e=>{
+    const {st,nextAceite,nextBateria,nextVisita}=equipStatus(e);
+    const rc=st==='rojo'?'row-err':st==='amarillo'?'row-warn':'';
+    const dot=st==='rojo'?'dot-err':st==='amarillo'?'dot-warn':st==='gris'?'':'dot-ok';
+    const badg=st==='rojo'?'b-err':st==='amarillo'?'b-warn':st==='gris'?'b-gray':'b-ok';
+    const lbl=st==='rojo'?'Vencido':st==='amarillo'?'Próximo':st==='gris'?'Sin fecha':'Al día';
+    const crit=clientCritical(e.clienteId);
+
+    const tipoAbrev=e.tipo==='Grupo Electrógeno'?'G. Electrógeno':e.tipo;
+    return `<tr class="${rc}">
+      <td>
+        <div style="font-size:13px;font-weight:600">${e.id}</div>
+        <div style="font-size:11px;color:var(--t2)">${tipoAbrev}</div>
+      </td>
+      <td>${clientName(e.clienteId)}</td>
+      ${eqDateCell(e.id,'ultimaVisita',e.ultimaVisita,nextVisita)}
+      ${eqDateCell(e.id,'ultimoPreventivo',e.ultimoPreventivo,e.proximoPreventivo)}
+      ${eqDateCell(e.id,'ultimoAceite',e.ultimoAceite,nextAceite)}
+      ${eqDateCell(e.id,'ultimoBateria',e.ultimoBateria,nextBateria)}
+      <td><span class="dot ${dot}"></span><span class="badge ${badg}">${lbl}</span></td>
+      <td style="white-space:nowrap">
+        <div style="display:flex;gap:6px">
+          <button class="eq-act-btn" onclick="openEquipModal('${e.id}')" title="Editar equipo">✏</button>
+          <button class="eq-act-btn eq-act-del" onclick="delEquipConfirm('${e.id}')" title="Eliminar equipo">🗑</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function setEquipFilter(f,btn){
+  equipFilter=f;
+  document.querySelectorAll('.filters-bar .filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderEquipos();
+}
+
+// ─── SEARCH / FILTER ─────────────────────────────────────────────────────────
+function resetFilters(){
+  ['cli-q','cli-f-tipo','cli-f-prio','cli-f-est',
+   'equip-q','equip-f-tipo','equip-f-est',
+   'pipe-q','pipe-f-est','pipe-f-resp',
+   'fact-q','fact-f-ajuste','fact-f-est','fact-f-tipo',
+   'rem-q','rem-f-prio','rem-f-est',
+   'ped-q','ped-f-est','ped-f-cli'
+  ].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.querySelectorAll('.srch-clear').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('.srch-count').forEach(s=>s.textContent='');
+}
+function toggleClear(pfx,active){
+  const el=document.getElementById(pfx+'-clear');
+  if(el)el.classList.toggle('on',!!active);
+}
+
+function applyCliFilter(){
+  const q=(document.getElementById('cli-q')||{value:''}).value.trim().toLowerCase();
+  const tipo=(document.getElementById('cli-f-tipo')||{value:''}).value;
+  const est=(document.getElementById('cli-f-est')||{value:''}).value;
+  let n=0;
+  document.querySelectorAll('#cli-tbody tr').forEach(tr=>{
+    // Busco el ID del cliente en el onclick del botón de ficha
+    const btn=tr.querySelector('button[onclick*="openFicha"]');
+    if(!btn){tr.style.display='none';return;}
+    const match=btn.getAttribute('onclick').match(/'([^']+)'/);
+    if(!match){tr.style.display='none';return;}
+    const c=D.clientes.find(x=>x.id===match[1]);
+    if(!c){tr.style.display='none';return;}
+    const tOk=!tipo||(tipo==='Sanatorio/Clínica'?['Sanatorio','Clínica','Sanatorio/Clínica'].includes(c.tipo):c.tipo===tipo);
+    const qOk=!q||(c.nombre||'').toLowerCase().includes(q)||(c.email||'').toLowerCase().includes(q)||(c.contacto||'').toLowerCase().includes(q)||(c.ciudad||'').toLowerCase().includes(q)||(c.tipo||'').toLowerCase().includes(q);
+    const ok=qOk&&tOk&&(!est||c.estadoCliente===est);
+    tr.style.display=ok?'':'none';
+    if(ok) n++;
+  });
+  const el=document.getElementById('cli-count');
+  if(el)el.textContent=(q||tipo||est)&&n<D.clientes.length?`Mostrando ${n} de ${D.clientes.length} clientes`:'';
+  toggleClear('cli',q||tipo||est);
+}
+function clearCliFilter(){
+  ['cli-q','cli-f-tipo','cli-f-est'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  applyCliFilter();
+}
+
+function applyEquipFilter(){
+  const q=(document.getElementById('equip-q')||{value:''}).value.trim().toLowerCase();
+  const tipo=(document.getElementById('equip-f-tipo')||{value:''}).value;
+  const est=(document.getElementById('equip-f-est')||{value:''}).value;
+  const rows=document.querySelectorAll('#equip-tbody tr');
+  let n=0,tot=rows.length;
+  rows.forEach(tr=>{
+    const cells=tr.cells;
+    if(!cells||cells.length<7){return;}
+    // cells[0] = ID/Tipo (tipo está como subtexto), cells[1] = Cliente, cells[6] = Estado
+    const id=(cells[0].textContent||'').toLowerCase();
+    const cli=(cells[1].textContent||'').toLowerCase();
+    const tipoV=(cells[0].textContent||'');  // el tipo está en el subtexto de la celda ID
+    const estV=(cells[6].textContent||'').trim();
+    const tipoOk=!tipo||tipoV.includes(tipo);
+    const estOk=!est||estV.includes(est);
+    const ok=(!q||id.includes(q)||cli.includes(q))&&tipoOk&&estOk;
+    tr.style.display=ok?'':'none';
+    if(ok)n++;
+  });
+  const el=document.getElementById('equip-count');
+  if(el)el.textContent=(q||tipo||est)&&n<tot?`Mostrando ${n} de ${tot} equipos`:'';
+  toggleClear('equip',q||tipo||est);
+}
+function clearEquipFilter(){
+  ['equip-q','equip-f-tipo','equip-f-est'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  applyEquipFilter();
+}
+
+function refreshPipeRespOpts(){
+  const sel=document.getElementById('pipe-f-resp');
+  if(!sel)return;
+  const opts=[...new Set(D.cotizaciones.map(c=>c.responsable).filter(Boolean))].sort();
+  sel.innerHTML='<option value="">Responsable: Todos</option>'+opts.map(r=>`<option>${r}</option>`).join('');
+}
+function applyPipeFilter(){
+  const q=(document.getElementById('pipe-q')||{value:''}).value.trim().toLowerCase();
+  const est=(document.getElementById('pipe-f-est')||{value:''}).value;
+  const resp=(document.getElementById('pipe-f-resp')||{value:''}).value;
+  document.querySelectorAll('.k-col').forEach(col=>{
+    const colEst=col.querySelector('.k-body')?.dataset.estado||'';
+    col.style.display=(!est||colEst===est)?'':'none';
+  });
+  let n=0;
+  document.querySelectorAll('.k-card').forEach(card=>{
+    const col=card.closest('.k-col');
+    if(col&&col.style.display==='none'){card.style.display='none';return;}
+    const idT=(card.querySelector('.k-title')?.textContent||'').toLowerCase();
+    const cliT=(card.querySelector('.k-client')?.textContent||'').toLowerCase();
+    const descT=(card.querySelector('.k-desc')?.textContent||'').toLowerCase();
+    const respT=(card.lastElementChild?.textContent||'').trim();
+    const ok=(!q||idT.includes(q)||cliT.includes(q)||descT.includes(q))&&(!resp||respT===resp);
+    card.style.display=ok?'':'none';
+    if(ok)n++;
+  });
+  document.querySelectorAll('.k-col').forEach(col=>{
+    if(col.style.display==='none')return;
+    const vis=[...col.querySelectorAll('.k-card')].filter(c=>c.style.display!=='none').length;
+    const cEl=col.querySelector('.k-count');
+    if(cEl)cEl.textContent=vis;
+  });
+  const el=document.getElementById('pipe-count');
+  const anyF=q||est||resp;
+  if(el)el.textContent=anyF?(n?`${n} cotizaciones encontradas`:'Sin resultados'):'';
+  toggleClear('pipe',anyF);
+}
+function clearPipeFilter(){
+  ['pipe-q','pipe-f-est','pipe-f-resp'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  applyPipeFilter();
+}
+
+function applyFactFilter(){
+  const q=(document.getElementById('fact-q')||{value:''}).value.trim().toLowerCase();
+  const ajuste=(document.getElementById('fact-f-ajuste')||{value:''}).value;
+  const est=(document.getElementById('fact-f-est')||{value:''}).value;
+  const tipo=(document.getElementById('fact-f-tipo')||{value:''}).value;
+  const modo=(document.getElementById('fact-f-modo')||{value:''}).value;
+  const mStr=curMonth||nowMonthStr();
+  const estados=D.facturacion_estados[mStr]||{};
+  let n=0;
+  document.querySelectorAll('#fact-list .cl-item').forEach((div,i)=>{
+    const c=D.clientes[i];
+    if(!c){div.style.display='none';return;}
+    const st=estados[c.id]||'Pendiente';
+    const tOk=!tipo||(tipo==='Sanatorio/Clínica'?c.tipo==='Sanatorio'||c.tipo==='Clínica':c.tipo===tipo);
+    const mOk=!modo||(c.facturacion||'Manual')===modo;
+    const ok=(!q||(c.nombre||'').toLowerCase().includes(q))&&(!ajuste||c.ajuste===ajuste)&&(!est||st===est)&&tOk&&mOk;
+    div.style.display=ok?'':'none';
+    if(ok)n++;
+  });
+  const el=document.getElementById('fact-count');
+  if(el)el.textContent=(q||ajuste||est||tipo||modo)&&n<D.clientes.length?`Mostrando ${n} de ${D.clientes.length} clientes`:'';
+  toggleClear('fact',q||ajuste||est||tipo||modo);
+}
+function clearFactFilter(){
+  ['fact-q','fact-f-ajuste','fact-f-est','fact-f-tipo','fact-f-modo'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  applyFactFilter();
+}
+
+function applyRemFilter(){
+  const q=(document.getElementById('rem-q')||{value:''}).value.trim().toLowerCase();
+  const prio=(document.getElementById('rem-f-prio')||{value:''}).value;
+  const est=(document.getElementById('rem-f-est')||{value:''}).value;
+  const rows=document.querySelectorAll('#rem-tbody tr');
+  let n=0,tot=rows.length;
+  rows.forEach(tr=>{
+    const cells=tr.cells;
+    if(!cells||cells.length<6)return;
+    const tit=(cells[0].textContent||'').toLowerCase();
+    const cli=(cells[1].textContent||'').toLowerCase();
+    const notas=(cells[5].textContent||'').toLowerCase();
+    const prioV=(cells[3].textContent||'').trim();
+    const estV=(cells[4].textContent||'').trim();
+    const ok=(!q||tit.includes(q)||cli.includes(q)||notas.includes(q))&&(!prio||prioV===prio)&&(!est||estV===est);
+    tr.style.display=ok?'':'none';
+    if(ok)n++;
+  });
+  const el=document.getElementById('rem-count');
+  if(el)el.textContent=(q||prio||est)&&n<tot?`${n} de ${tot} recordatorios`:'';
+  toggleClear('rem',q||prio||est);
+}
+function clearRemFilter(){
+  ['rem-q','rem-f-prio','rem-f-est'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  applyRemFilter();
+}
+
+function quoteFromEquip(eid){
+  const eq=D.equipos.find(e=>e.id===eid);
+  if(eq) openQuoteModal(null,eq);
+}
+
+// ─── FACTURACIÓN ─────────────────────────────────────────────────────────────
+function renderFacturacion(){
+  if(!curMonth) curMonth=nowMonthStr();
+  document.getElementById('fact-month-lbl').textContent=monthLabel(curMonth);
+
+  const mStr=curMonth||nowMonthStr();
+  const facEst=D.facturacion_estados[mStr]||{};
+  const facN=D.clientes.filter(c=>{
+    const s=facEst[c.id]||'Pendiente';
+    return s==='Facturado'||s==='Cobrado';
+  }).length;
+  document.getElementById('facturacion-sub').textContent=
+    `${D.clientes.length} clientes · ${facN} facturados este mes`;
+
+  const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const ABREV=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const [,mesIdx]=(curMonth||nowMonthStr()).split('-');
+  const nombreMesActual=MESES[parseInt(mesIdx)-1];
+
+  const cl=D.clientes.filter(c=>{
+    const m=c.mesesFacturacion;
+    if(!m||!Array.isArray(m)||!m.length) return true;
+    return m.includes(nombreMesActual);
+  });
+  const noAplican=D.clientes.length-cl.length;
+
+  const infoEl=document.getElementById('fact-month-info');
+  if(infoEl) infoEl.textContent=noAplican>0
+    ?`${cl.length} cliente${cl.length!==1?'s':''} factura${cl.length===1?'':'n'} este mes · ${noAplican} no aplica${noAplican===1?'':'n'}`
+    :'';
+
+  if(!D.clientes.length){
+    document.getElementById('fact-prog-bar').style.width='0%';
+    document.getElementById('fact-prog-txt').textContent='Sin clientes';
+    document.getElementById('fact-stats').innerHTML='';
+    document.getElementById('fact-list').innerHTML='<div class="empty">No hay clientes registrados</div>';
+    return;
+  }
+
+  const estados=D.facturacion_estados[curMonth]||{};
+
+  if(!cl.length){
+    document.getElementById('fact-prog-bar').style.width='0%';
+    document.getElementById('fact-prog-txt').textContent=`${noAplican} cliente${noAplican!==1?'s':''} no factura${noAplican===1?'':'n'} en este mes`;
+    document.getElementById('fact-stats').innerHTML='';
+    document.getElementById('fact-list').innerHTML='<div class="empty">Ningún cliente factura en este mes según su configuración</div>';
+    return;
+  }
+
+  const visible=cl.filter(c=>(estados[c.id]||'Pendiente')!=='Excluido');
+  const excl=cl.length-visible.length;
+  const pend=visible.filter(c=>(estados[c.id]||'Pendiente')==='Pendiente').length;
+  const fact=visible.filter(c=>(estados[c.id]||'')==='Facturado').length;
+  const cobr=visible.filter(c=>(estados[c.id]||'')==='Cobrado').length;
+  const pct=visible.length?Math.round((fact+cobr)/visible.length*100):0;
+
+  document.getElementById('fact-prog-bar').style.width=pct+'%';
+  document.getElementById('fact-prog-txt').textContent=
+    `${fact+cobr} de ${visible.length} clientes (${pct}%)${noAplican?` · ${noAplican} no factura${noAplican===1?'':'n'} este mes`:''}`;
+  document.getElementById('fact-stats').innerHTML=`
+    <span class="badge b-warn">Pendientes: ${pend}</span>
+    <span class="badge b-info">Facturados: ${fact}</span>
+    <span class="badge b-ok">Cobrados: ${cobr}</span>
+    ${excl?`<span class="badge b-gray">Excluidos: ${excl}</span>`:''}
+  `;
+
+  document.getElementById('fact-list').innerHTML=cl.map(c=>{
+    const st=estados[c.id]||'Pendiente';
+    const excluded=st==='Excluido';
+    const rowCls=excluded?'':st==='Facturado'?'st-fact':st==='Cobrado'?'st-cobr':'';
+    const mesesBadge=(c.mesesFacturacion&&c.mesesFacturacion.length)
+      ?`<div style="font-size:10px;color:var(--t3);margin-top:2px">${c.mesesFacturacion.map(m=>ABREV[MESES.indexOf(m)]||m).join(' · ')}</div>`
+      :'';
+    return `<div class="cl-item ${rowCls}" style="${excluded?'opacity:.4;':''}">
+      <div style="font-weight:500;${excluded?'text-decoration:line-through;color:var(--t3);':''}">
+        ${c.nombre}
+        ${mesesBadge}
+      </div>
+      <div><span class="badge b-gray" style="font-size:10.5px">${c.ajuste||'—'}</span></div>
+      <div style="text-align:center">${c.requiereOC?'<span class="badge b-info" style="font-size:10px">OC</span>':'<span style="color:var(--t3)">—</span>'}</div>
+      <div style="text-align:center">${c.requiereHES?'<span class="badge b-purple" style="font-size:10px">HES</span>':'<span style="color:var(--t3)">—</span>'}</div>
+      <div style="font-size:12px">
+        ${(()=>{
+          const f=c.facturacion||'Manual';
+          const d=c.facturacionDia;
+          if(f==='Por fecha'&&d){
+            const hoy=new Date().getDate();
+            const pasada=hoy>=d;
+            return `<span style="font-size:11.5px;font-weight:600;color:var(--info)">📅 Día ${d}</span>
+                    <div style="font-size:10.5px;color:var(--t3);margin-top:1px">${pasada?'Ya pasó este mes':'Pendiente este mes'}</div>`;
+          }
+          if(f==='Automática') return '<span style="font-size:11.5px;font-weight:600;color:var(--ok)">⚡ Automática</span>';
+          return '<span style="font-size:11.5px;color:var(--t2)">Manual</span>';
+        })()}
+      </div>
+      <div>
+        ${excluded
+          ?`<div style="text-align:center;font-size:11.5px;color:var(--t3);font-style:italic;padding:4px 0">Excluido este mes</div>`
+          :`<div class="st-sel">
+            <button onclick="setFactEst('${c.id}','Pendiente')" class="${st==='Pendiente'?'on-pend':''}">Pend.</button>
+            <button onclick="setFactEst('${c.id}','Facturado')" class="${st==='Facturado'?'on-fact':''}">Fact.</button>
+            <button onclick="setFactEst('${c.id}','Cobrado')" class="${st==='Cobrado'?'on-cobr':''}">Cobr.</button>
+          </div>`}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center">
+        ${excluded
+          ?`<button class="btn btn-outline btn-sm" onclick="restoreFactMonth('${c.id}')" title="Restablecer para este mes" style="font-size:13px;padding:2px 7px">↩</button>`
+          :`<button class="btn-del" onclick="excludeFactMonth('${c.id}')" title="Excluir del mes">🗑</button>`}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function changeMonth(n){
+  curMonth=addMonths(curMonth||nowMonthStr(),n);
+  renderFacturacion();
+}
+
+function setFactEst(cid,st){
+  if(!curMonth) curMonth=nowMonthStr();
+  if(!D.facturacion_estados[curMonth]) D.facturacion_estados[curMonth]={};
+  D.facturacion_estados[curMonth][cid]=st;
+  persist();
+  renderFacturacion();
+}
+
+function excludeFactMonth(cid){
+  if(!curMonth) curMonth=nowMonthStr();
+  if(!D.facturacion_estados[curMonth]) D.facturacion_estados[curMonth]={};
+  D.facturacion_estados[curMonth][cid]='Excluido';
+  persist();renderFacturacion();toast('Cliente excluido del mes');
+}
+
+function restoreFactMonth(cid){
+  if(!curMonth) curMonth=nowMonthStr();
+  if(D.facturacion_estados[curMonth]) delete D.facturacion_estados[curMonth][cid];
+  persist();renderFacturacion();toast('Cliente restablecido');
+}
+
+// ─── MODAL QUOTE ─────────────────────────────────────────────────────────────
+function updateEquipSel(preselect){
+  const cliId=document.getElementById('f-cli').value;
+  const sel=document.getElementById('f-eq');
+  if(!cliId){
+    sel.disabled=true;
+    sel.innerHTML='<option value="">Seleccioná un cliente primero</option>';
+    return;
+  }
+  sel.disabled=false;
+  const eqs=D.equipos.filter(e=>e.clienteId===cliId);
+  const p=preselect||'';
+  sel.innerHTML='<option value="">— Sin equipo —</option>'+
+    eqs.map(e=>`<option value="${e.id}" ${p===e.id?'selected':''}>${e.id} — ${e.tipo}</option>`).join('');
+}
+
+function openQuoteModal(qid,prefillEquip){
+  editingQuoteId=qid||null;
+  const q=qid?D.cotizaciones.find(c=>c.id===qid):null;
+  document.getElementById('modal-title').textContent=q?`Editar — ${qid}`:'Nueva Cotización';
+
+  const clientOpts=D.clientes.map(c=>`<option value="${c.id}" ${(q?.clienteId===c.id||prefillEquip?.clienteId===c.id)?'selected':''}>${c.nombre}</option>`).join('');
+  const stOpts=ESTADOS.map(s=>`<option value="${s}" ${(q?.estado===s)||(s==='Solicitud'&&!q)?'selected':''}>${s}</option>`).join('');
+  const nextId=`COT-${new Date().getFullYear()}-${String(D.cotizaciones.length+1).padStart(3,'0')}`;
+
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-row">
+      <div class="fg"><label class="fl">N° Cotización</label><input class="fc" id="f-id" value="${q?.id||nextId}" ${q?'readonly':''}></div>
+      <div class="fg"><label class="fl">Estado</label><select class="fc" id="f-est">${stOpts}</select></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Cliente</label><select class="fc" id="f-cli" onchange="updateEquipSel()">${clientOpts}</select></div>
+      <div class="fg"><label class="fl">Equipo</label><select class="fc" id="f-eq" disabled><option value="">Seleccioná un cliente primero</option></select></div>
+    </div>
+    <div class="fg"><label class="fl">Descripción *</label><textarea class="fc" id="f-desc">${q?.descripcion||(prefillEquip?`Mantenimiento preventivo — ${prefillEquip.id} — ${prefillEquip.tipo}`:'')}</textarea></div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Monto ($)</label><input class="fc" type="number" id="f-monto" value="${q?.monto||''}"></div>
+      <div class="fg"><label class="fl">Responsable</label><input class="fc" id="f-resp" value="${q?.responsable||''}"></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Fecha envío</label><input class="fc" type="date" id="f-env" value="${q?.fechaEnvio||today()}"></div>
+      <div class="fg"><label class="fl">Fecha follow-up</label><input class="fc" type="date" id="f-fup" value="${q?.fechaFollowup||''}"></div>
+    </div>
+    <div class="fg"><label class="fl">Notas</label><textarea class="fc" id="f-notas">${q?.notas||''}</textarea></div>
+  `;
+  document.getElementById('modal-foot').innerHTML=`
+    ${q?`<button class="btn" style="background:#fef2f2;color:var(--err);border:1px solid #fecaca" onclick="deleteQuote('${qid}')">Eliminar</button>`:''}
+    <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="saveQuote()">Guardar cotización</button>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+  updateEquipSel(q?.equipoId||prefillEquip?.id||'');
+}
+
+function saveQuote(){
+  const id=document.getElementById('f-id').value.trim();
+  const est=document.getElementById('f-est').value;
+  const cliId=document.getElementById('f-cli').value;
+  const eqId=document.getElementById('f-eq').value;
+  const desc=document.getElementById('f-desc').value.trim();
+  const monto=parseFloat(document.getElementById('f-monto').value)||0;
+  const resp=document.getElementById('f-resp').value.trim();
+  const env=document.getElementById('f-env').value;
+  const fup=document.getElementById('f-fup').value;
+  const notas=document.getElementById('f-notas').value.trim();
+  if(!id||!cliId||!desc){toast('⚠ Completá N° cotización, cliente y descripción');return;}
+  const existing=editingQuoteId?D.cotizaciones.find(c=>c.id===editingQuoteId):null;
+  const obj={id,clienteId:cliId,equipoId:eqId,descripcion:desc,monto,fechaEnvio:env,fechaFollowup:fup,responsable:resp,estado:est,notas,nroFactura:existing?.nroFactura||'',fechaFactura:existing?.fechaFactura||''};
+  if(editingQuoteId){
+    const i=D.cotizaciones.findIndex(c=>c.id===editingQuoteId);
+    if(i>-1) D.cotizaciones[i]=obj;
+  } else {
+    if(D.cotizaciones.find(c=>c.id===id)){toast('⚠ Ya existe una cotización con ese número');return;}
+    D.cotizaciones.push(obj);
+  }
+  persist(); closeModal(); renderModule();
+  toast(`Cotización ${id} guardada`);
+}
+
+function deleteQuote(id){
+  confirmDel(`Cotización ${id}`,()=>{
+    D.cotizaciones=D.cotizaciones.filter(c=>c.id!==id);
+    persist(); closeModal(); renderModule();
+    toast(`Cotización ${id} eliminada`);
+  });
+}
+
+// ─── MODAL EQUIP ─────────────────────────────────────────────────────────────
+function openEquipModal(eid){
+  const eq=eid?D.equipos.find(e=>e.id===eid):null;
+  document.getElementById('modal-title').textContent=eq?`Editar Equipo — ${eid}`:'Nuevo Equipo';
+  const tipos=['Grupo Electrógeno','Electrocompresor','Motocompresor','Motobomba','Secadora de Aire'];
+  const tipoOpts=tipos.map(t=>`<option ${eq?.tipo===t?'selected':''}>${t}</option>`).join('');
+  const cliOpts=D.clientes.map(c=>`<option value="${c.id}" ${eq?.clienteId===c.id?'selected':''}>${c.nombre}</option>`).join('');
+  const _vfd={'Semanal':7,'Quincenal':15,'Mensual':30,'Bimestral':60,'Trimestral':90,'Semestral':180,'Anual':365};
+  const _vcli=D.clientes.find(c=>c.id===(eq?.clienteId||''));
+  const _nvisita=eq?.proximaVisita||(eq?.ultimaVisita&&_vfd[_vcli?.frecuenciaVisita||'']?addDays(eq.ultimaVisita,_vfd[_vcli?.frecuenciaVisita||'']):'' );
+
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-row">
+      <div class="fg"><label class="fl">ID Equipo *</label><input class="fc" id="e-id" value="${eq?.id||''}" ${eq?'readonly':''} placeholder="ej: GE-009"></div>
+      <div class="fg"><label class="fl">Tipo de equipo</label><select class="fc" id="e-tipo">${tipoOpts}</select></div>
+    </div>
+    <div class="fg"><label class="fl">Cliente *</label><select class="fc" id="e-cli">${cliOpts}</select></div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Fecha del último preventivo realizado</label><input class="fc" type="date" id="e-uprev" value="${eq?.ultimoPreventivo||''}" oninput="autoNextPrev()"></div>
+      <div class="fg"><label class="fl">Próximo preventivo</label><input class="fc" type="date" id="e-nprev" value="${eq?.proximoPreventivo||''}"></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Fecha del último cambio de refrigerante</label><input class="fc" type="date" id="e-ace" value="${eq?.ultimoAceite||''}" oninput="autoNextAceite()"></div>
+      <div class="fg"><label class="fl">Próximo refrigerante</label><input class="fc" type="date" id="e-nace" value="${eq?.proximoAceite||(eq?.ultimoAceite?addDays(eq.ultimoAceite,730):'')}" ></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Fecha del último cambio de batería</label><input class="fc" type="date" id="e-bat" value="${eq?.ultimoBateria||''}"></div>
+      <div class="fg"><label class="fl">Último refrigerante (gas)</label><input class="fc" type="date" id="e-ref" value="${eq?.ultimoRefrigerante||''}"></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Horómetro (hs)</label><input class="fc" type="number" id="e-hor" value="${eq?.horometro||''}"></div>
+      <div class="fg"></div>
+    </div>
+    <div class="form-row">
+      <div class="fg"><label class="fl">Fecha de la última visita</label><input class="fc" type="date" id="e-uvisita" value="${eq?.ultimaVisita||''}" oninput="autoNextVisita()"></div>
+      <div class="fg"><label class="fl">Próxima visita</label><input class="fc" type="date" id="e-nvisita" value="${_nvisita}"></div>
+    </div>
+    <div class="fg"><label class="fl">Observaciones</label><textarea class="fc" id="e-obs">${eq?.observaciones||''}</textarea></div>
+  `;
+  document.getElementById('modal-foot').innerHTML=`
+    ${eq?`<button class="btn" style="background:#fef2f2;color:var(--err);border:1px solid #fecaca" onclick="deleteEquip('${eid}')">Eliminar</button>`:''}
+    <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="saveEquip()">Guardar equipo</button>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function autoNextPrev(){
+  const v=document.getElementById('e-uprev').value;
+  if(v) document.getElementById('e-nprev').value=addDays(v,365);
+}
+
+function autoNextAceite(){
+  const v=document.getElementById('e-ace').value;
+  if(v) document.getElementById('e-nace').value=addDays(v,730);
+}
+
+function autoNextVisita(){
+  const v=document.getElementById('e-uvisita').value;
+  if(!v) return;
+  const cli=D.clientes.find(c=>c.id===document.getElementById('e-cli').value);
+  const FDAYS={'Semanal':7,'Quincenal':15,'Mensual':30,'Bimestral':60,'Trimestral':90,'Semestral':180,'Anual':365};
+  const d=FDAYS[cli?.frecuenciaVisita||''];
+  if(d) document.getElementById('e-nvisita').value=addDays(v,d);
+}
+
+function saveEquip(){
+  const id=document.getElementById('e-id').value.trim();
+  const tipo=document.getElementById('e-tipo').value;
+  const cliId=document.getElementById('e-cli').value;
+  const uprev=document.getElementById('e-uprev').value;
+  const nprev=document.getElementById('e-nprev').value;
+  const ace=document.getElementById('e-ace').value;
+  const nace=document.getElementById('e-nace').value;
+  const bat=document.getElementById('e-bat').value;
+  const ref=document.getElementById('e-ref').value;
+  const hor=parseInt(document.getElementById('e-hor').value)||0;
+  const obs=document.getElementById('e-obs').value.trim();
+  const uvisita=(document.getElementById('e-uvisita')||{value:''}).value;
+  const nvisita=(document.getElementById('e-nvisita')||{value:''}).value;
+  if(!id||!cliId){toast('⚠ Completá ID y cliente');return;}
+  const obj={id,clienteId:cliId,tipo,ultimoPreventivo:uprev,proximoPreventivo:nprev,ultimoAceite:ace,proximoAceite:nace,ultimoBateria:bat,ultimoRefrigerante:ref,horometro:hor,observaciones:obs,ultimaVisita:uvisita,proximaVisita:nvisita};
+  const i=D.equipos.findIndex(e=>e.id===id);
+  if(i>-1) D.equipos[i]=obj; else D.equipos.push(obj);
+  persist(); closeModal(); renderEquipos();
+  toast(`Equipo ${id} guardado`);
+}
+
+function deleteEquip(id){
+  confirmDel(`Equipo ${id}`,()=>{
+    D.equipos=D.equipos.filter(e=>e.id!==id);
+    persist(); closeModal(); renderEquipos();
+    toast(`Equipo ${id} eliminado`);
+  });
+}
+
+// ─── CONFIRM DELETE ──────────────────────────────────────────────────────────
+let confCb=null;
+function confirmDel(label,cb){
+  confCb=cb;
+  document.getElementById('conf-body').innerHTML=
+    `<p style="font-size:14px;color:var(--t1);line-height:1.6">¿Seguro que querés eliminar <strong>${label}</strong>?<br><span style="font-size:13px;color:var(--t2)">Esta acción no se puede deshacer.</span></p>`;
+  document.getElementById('conf-overlay').classList.add('open');
+}
+function closeConf(){document.getElementById('conf-overlay').classList.remove('open');confCb=null;}
+function doConf(){if(confCb)confCb();closeConf();}
+
+function delEquipConfirm(eid){
+  const e=D.equipos.find(x=>x.id===eid);
+  confirmDel(e?`${e.id} — ${clientName(e.clienteId)}`:eid,()=>{
+    D.equipos=D.equipos.filter(x=>x.id!==eid);
+    persist();renderEquipos();toast(`Equipo ${eid} eliminado`);
+  });
+}
+function delQuoteConfirm(qid){
+  const c=D.cotizaciones.find(x=>x.id===qid);
+  confirmDel(c?`${c.id} — ${clientName(c.clienteId)}`:qid,()=>{
+    D.cotizaciones=D.cotizaciones.filter(x=>x.id!==qid);
+    persist();renderPipeline();toast(`Cotización ${qid} eliminada`);
+  });
+}
+function delFactConfirm(cid){
+  const c=D.clientes.find(x=>x.id===cid);
+  confirmDel(c?c.nombre:cid,()=>{
+    D.clientes=D.clientes.filter(x=>x.id!==cid);
+    persist();renderFacturacion();toast('Cliente eliminado');
+  });
 }
