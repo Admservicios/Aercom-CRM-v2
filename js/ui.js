@@ -5,7 +5,5 @@
  */
 
 function initializeUI() {
-
     console.log("✔ UI inicializada");
-
 }
